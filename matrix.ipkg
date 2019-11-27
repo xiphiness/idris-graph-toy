@@ -1,0 +1,8 @@
+package myProject
+
+executable = matrix
+main = Main
+sourcedir = src
+pkgs = gl, sdl2, glfw, contrib
+
+makefile = Makefile
