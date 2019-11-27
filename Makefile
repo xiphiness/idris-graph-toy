@@ -1,7 +1,7 @@
 .PHONY: install
 install:
-	idris --install matrix.ipkg
+	idris --install graph-toy.ipkg
 
 .PHONY: clean
 clean:
-	idris --clean matrix.ipkg
+	idris --clean graph-toy.ipkg

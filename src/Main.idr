@@ -1,5 +1,4 @@
 module Main
-import Control.ST
 import Graphics.SDL2 as SDL2
 import Graphics.Rendering.Gl.Types
 import Graphics.Rendering.Gl.Buffers as Glb
@@ -15,6 +14,8 @@ import Data.Vect
 import Data.Buffer
 import CFFI.Memory
 import CFFI.Types
+import Control.ST
+
 
 %include C "GL/glew.h"
 %include C "SDL.h"
@@ -163,36 +164,66 @@ myCreateShaders shaderSpec = do
 --   mfree ptr
 --   pure $ translate t val
 --
-record MainResources where
-  constructor MkResources
-  ||| location of the shader program
-  program: Int
-  shaders: Vect (S (S n)) Int
-  ||| locations of all shaders for this program. minimum of two shaders is required (vertex and fragment shader)
-  triangleVbo: GLuint
-  triangleBuf: Ptr
+-- record MainState where
+--   constructor MkState
+--   offsetX: Double
+--   offsetY: Double
+--
+
+record VarLocs where
+  constructor MkVarLocs
+  coord2d: GLint
+  offset_x: GLint
+  scale_x: GLint
+
+readShaderSpecs: Vect n String -> IO(Either FileError (Vect n (GLenum, String)))
+readShaderSpecs (x0::x1::xs) = (do
+  Right vertexShader <- readFile x0 | Left ferror => pure (Left ferror)
+  Right fragmentShader <- readFile x1 | Left ferror => pure (Left ferror)
+  Right remainder <- readShaderSpecs xs | Left ferror => pure (Left ferror)
+  pure $ Right ([(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)] ++ remainder)
+  )
+
+interface MainState (n: Nat) (m : Type -> Type) where
+  getProgram : ST m Var [add (State GLuint)]
+  getShaders : Vect n String -> ST m Var [add (State (Either FileError (Vect n Int)))]
+  getVarLocs : (prog : Var) -> ST m Var [add (State VarLocs), prog ::: (State GLuint)]
+  getBuffer : ST m Var [add (State GLuint)]
+
+implementation MainState n IO where
+  getProgram = do
+    program <- lift $ glCreateProgram
+    prog <- new program
+    pure prog
+  getShaders shaders = (do
+    Right shaderSpec <- lift $ readShaderSpecs shaders | Left ferror => (do
+      error <- new (Left ferror)
+      pure error)
+    locations <- lift $ traverse createShader shaderSpec
+    locs <- new (Right locations)
+    pure locs)
+  getVarLocs program = (do
+    prog <- read program
+    coord2d <- lift $ (glGetAttribLocation prog "coord2d")
+    offset <- lift $ (glGetUniformLocation prog "offset_x")
+    scale <- lift $ (glGetUniformLocation prog "scale_x")
+    varLocs <- lift $ (pure $ MkVarLocs coord2d offset scale)
+    locs <- new varLocs
+    pure locs)
+  getBuffer = (do
+    (vbo :: _ ) <- lift $ glGenBuffers 1
+    lift $ glBindBuffer GL_ARRAY_BUFFER vbo
+    ds <- lift $ sizeofDouble
+    buf <- lift $ (Glb.doublesToBuffer triangleVertices)
+    lift $ glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
+    res <- new vbo
+    pure res
+    )
 
 
+-- initMain : (win : Var) -> (varLocs : Var) -> (prog : Var) -> ST m () [win ::: SDL2.Window, varLocs ::: (State VarLocs), prog :: (State GLuint)]
+-- initMain win = do
 
-programFromShaders : IO (Either FileError MainResources)
-programFromShaders = (do
-  Right shaderSpec <- readShaderSpec | Left ferror => pure (Left ferror)
-  -- Right vertexShader <- readFile "src/triangle.v.glsl" | Left ferror => pure (Left ferror)
-  -- Right fragmentShader <-  readFile "src/triangle.f.glsl" | Left ferror => pure (Left ferror)
-  -- shaderSpec <- pure $ [(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)]
-  MkShader program shaderLocs <- createShaders shaderSpec
-  traverse printShaderLog shaderLocs
-  (vbo :: _ ) <- glGenBuffers 1
-  glBindBuffer GL_ARRAY_BUFFER vbo
-  ds <- sizeofDouble
-  buf <- Glb.doublesToBuffer triangleVertices
-  glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
-  pure $ Right (MkResources program shaderLocs vbo buf))
-  where readShaderSpec: IO(Either FileError (Vect 2 (GLenum, String)))
-        readShaderSpec = do
-          Right vertexShader <- readFile "src/triangle.v.glsl" | Left ferror => pure (Left ferror)
-          Right fragmentShader <-  readFile "src/triangle.f.glsl" | Left ferror => pure (Left ferror)
-          pure $ Right [(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)]
 
 mainRender : SDL2.Window -> GLenum -> GLint -> GLuint -> IO ()
 mainRender window program attributeCoords vbo = do
@@ -208,6 +239,75 @@ mainRender window program attributeCoords vbo = do
   glDisableVertexAttribArray attributeCoords
   swapWindow window
   pure ()
+    -- offset <- call $ (lift $ (glGetUniformLocation prog "offset_x"))
+    -- scale <- call $ (lift $ (glGetUniformLocation prog "scale_x"))
+    -- varLocs <- lift $ (MkVarLocs coord2d offset scale)
+    -- locs <- new varLocs
+    -- pure locs)
+    -- Store x = State String
+    -- getProgram
+    -- connect = do store <- new "Secret Data"
+    --              pure store
+    -- disconnect store = delete store
+    -- readSecret store = read store
+    -- login store = do putStr "Enter password: "
+    --                  p <- getStr
+    --                  if p == "Mornington Crescent"
+    --                     then pure OK
+    --                     else pure BadPassword
+    -- logout store = pure ()
+
+
+
+
+record MainResources where
+  constructor MkResources
+  ||| location of the shader program
+  program: Int
+  shaders: Vect (S (S n)) Int
+  ||| locations of all shaders for this program. minimum of two shaders is required (vertex and fragment shader)
+  vbo: GLuint
+  buf: Ptr
+
+
+buffer2DFunction: ((Double -> Double) -> Int -> List Double)
+buffer2DFunction func num = loop func 0 num []
+  where loop: (Double -> Double) -> Int -> Int -> List Double -> List Double
+        loop func i num acc =
+          let iDbl = (cast i/scale)-1.0
+              res = func iDbl
+          in
+            if i < num
+              then
+              if res <= 1.0 && res >= -1.0
+                then
+                loop func (i+1) num (acc ++ [iDbl, res])
+              else loop func (i+1) num acc
+            else
+              acc
+        where scale: Double
+              scale = (cast num)/2.0
+
+programFromShaders : IO (Either FileError MainResources)
+programFromShaders = (do
+  Right shaderSpec <- readShaderSpec | Left ferror => pure (Left ferror)
+  MkShader program shaderLocs <- createShaders shaderSpec
+  traverse printShaderLog shaderLocs
+  (vbo :: _ ) <- glGenBuffers 1
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  ds <- sizeofDouble
+  buf <- Glb.doublesToBuffer triangleVertices
+  glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
+  pure $ Right (MkResources program shaderLocs vbo buf))
+  where readShaderSpec: IO(Either FileError (Vect 2 (GLenum, String)))
+        readShaderSpec = do
+          Right vertexShader <- readFile "src/xy.v.glsl" | Left ferror => pure (Left ferror)
+          Right fragmentShader <-  readFile "src/xy.f.glsl" | Left ferror => pure (Left ferror)
+          pure $ Right [(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)]
+
+
+
+
 
   --
   -- glClearColor(1.0, 1.0, 1.0, 1.0);

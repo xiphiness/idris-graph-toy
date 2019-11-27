@@ -1,6 +1,6 @@
 package myProject
 
-executable = graph-toy
+executable = graph_toy
 main = Main
 sourcedir = src
 pkgs = gl, sdl2, glfw, contrib
