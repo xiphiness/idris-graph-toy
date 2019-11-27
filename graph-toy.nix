@@ -28,7 +28,7 @@ build-idris-package  {
   # different from its package name here.
   # Idris dependencies to provide for the build
 
-  ipkgName = "matrix";
+  ipkgName = "graph-toy";
   idrisDeps = [ effects (import "${idris-sdl2-src.out}/default.nix").idris-sdl2 (import "${gl-idris-src.out}/default.nix").idris-gl glfw ];
   extraBuildInputs = [ pkg-config SDL2 SDL2_gfx glew libpng glfw ];
   src = ./.;
