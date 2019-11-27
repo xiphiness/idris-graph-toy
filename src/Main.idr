@@ -38,20 +38,6 @@ height = 480
 squareSize : Int
 squareSize = 50
 --
-vsSource: String
-vsSource = "#version 120
-attribute vec2 coord2d;
-void main(void) {
-  gl_Position = vec4(coord2d, 0.0, 1.0);
-}"
-
-fsSource: String
-fsSource = "#version 120
-void main(void) {
-  gl_FragColor[0] = 0.0;
-  gl_FragColor[1] = 0.0;
-  gl_FragColor[2] = 1.0;
-}";
 
 -- vsSource : List String
 -- vsSource = [
@@ -188,8 +174,12 @@ record MainResources where
 
 
 
-programFromShaders : IO (MainResources)
+programFromShaders : IO (Either FileError MainResources)
 programFromShaders = (do
+  Right shaderSpec <- readShaderSpec | Left ferror => pure (Left ferror)
+  -- Right vertexShader <- readFile "src/triangle.v.glsl" | Left ferror => pure (Left ferror)
+  -- Right fragmentShader <-  readFile "src/triangle.f.glsl" | Left ferror => pure (Left ferror)
+  -- shaderSpec <- pure $ [(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)]
   MkShader program shaderLocs <- createShaders shaderSpec
   traverse printShaderLog shaderLocs
   (vbo :: _ ) <- glGenBuffers 1
@@ -197,15 +187,19 @@ programFromShaders = (do
   ds <- sizeofDouble
   buf <- Glb.doublesToBuffer triangleVertices
   glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
-  pure $ MkResources program shaderLocs vbo buf)
-  where shaderSpec: Vect 2 (GLenum, String)
-        shaderSpec = [(GL_VERTEX_SHADER, vsSource), (GL_FRAGMENT_SHADER, fsSource)]
-
+  pure $ Right (MkResources program shaderLocs vbo buf))
+  where readShaderSpec: IO(Either FileError (Vect 2 (GLenum, String)))
+        readShaderSpec = do
+          Right vertexShader <- readFile "src/triangle.v.glsl" | Left ferror => pure (Left ferror)
+          Right fragmentShader <-  readFile "src/triangle.f.glsl" | Left ferror => pure (Left ferror)
+          pure $ Right [(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)]
 
 mainRender : SDL2.Window -> GLenum -> GLint -> GLuint -> IO ()
 mainRender window program attributeCoords vbo = do
   glClearColor 1.0 1.0 1.0 1.0
   glClear GL_COLOR_BUFFER_BIT
+  glEnable    GL_BLEND
+  glBlendFunc GL_SRC_ALPHA GL_ONE_MINUS_SRC_ALPHA
   glUseProgram program
   glBindBuffer GL_ARRAY_BUFFER vbo
   glEnableVertexAttribArray attributeCoords
@@ -282,15 +276,18 @@ mainRender window program attributeCoords vbo = do
       	-- /* Display the result */
       	-- SDL_GL_SwapWindow(window);
         --
-
-
+--
+--
 main : IO ()
 main = (do
   window <- sdlGlInitContext width height
   err <- glewInit
   putStrLn $ show err
   initErrorGl
-  MkResources program shaderLocs vbo buf <- programFromShaders
+  Right (MkResources program shaderLocs vbo buf) <- programFromShaders |
+    Left ferror => (do
+      putStrLn $ show ferror
+      quit)
   attributeCoords <- glGetAttribLocation program "coord2d"
   loop window program attributeCoords vbo buf
   quit)
