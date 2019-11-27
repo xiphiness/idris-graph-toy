@@ -180,32 +180,36 @@ myCreateShaders shaderSpec = do
 record MainResources where
   constructor MkResources
   ||| location of the shader program
-  program: Shader
+  program: Int
+  shaders: Vect (S (S n)) Int
   ||| locations of all shaders for this program. minimum of two shaders is required (vertex and fragment shader)
-  triangleVbo: Ptr
+  triangleVbo: GLuint
+  triangleBuf: Ptr
 
 
 
-programFromShaders : IO (Shader)
+programFromShaders : IO (MainResources)
 programFromShaders = (do
   MkShader program shaderLocs <- createShaders shaderSpec
   traverse printShaderLog shaderLocs
-  -- vboPtr <- malloc 4
-  -- [vbo :: _ ] <- glGenBuffers 1
-  -- vboVal <- peek I32 vboPtr
-  -- glBindBuffer GL_ARRAY_BUFFER vbo
-  pure $ MkShader program shaderLocs)
+  (vbo :: _ ) <- glGenBuffers 1
+  glBindBuffer GL_ARRAY_BUFFER vbo
+  ds <- sizeofDouble
+  buf <- Glb.doublesToBuffer triangleVertices
+  glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
+  pure $ MkResources program shaderLocs vbo buf)
   where shaderSpec: Vect 2 (GLenum, String)
         shaderSpec = [(GL_VERTEX_SHADER, vsSource), (GL_FRAGMENT_SHADER, fsSource)]
 
 
-mainRender : SDL2.Window -> GLenum -> GLint -> Ptr -> IO ()
-mainRender window program attributeCoords buf = do
+mainRender : SDL2.Window -> GLenum -> GLint -> GLuint -> IO ()
+mainRender window program attributeCoords vbo = do
   glClearColor 1.0 1.0 1.0 1.0
   glClear GL_COLOR_BUFFER_BIT
   glUseProgram program
+  glBindBuffer GL_ARRAY_BUFFER vbo
   glEnableVertexAttribArray attributeCoords
-  glVertexAttribPointer attributeCoords 2 GL_DOUBLE GL_FALSE 0 buf
+  glVertexAttribPointer attributeCoords 2 GL_DOUBLE GL_FALSE 0 prim__null
   glDrawArrays GL_TRIANGLES 0 3
   glDisableVertexAttribArray attributeCoords
   swapWindow window
@@ -286,14 +290,13 @@ main = (do
   err <- glewInit
   putStrLn $ show err
   initErrorGl
-  MkShader program shaderLocs <- programFromShaders
+  MkResources program shaderLocs vbo buf <- programFromShaders
   attributeCoords <- glGetAttribLocation program "coord2d"
-  buf <- Glb.doublesToBuffer triangleVertices
-  loop window program attributeCoords buf
+  loop window program attributeCoords vbo buf
   quit)
     where
-      loop : SDL2.Window -> GLenum -> GLuint -> Ptr -> IO ()
-      loop window program attributeCoords buf = do
+      loop : SDL2.Window -> GLenum -> GLuint -> GLuint -> Ptr -> IO ()
+      loop window program attributeCoords vbo buf = do
         False <- SDL2.pollEventsForQuit | pure ()
-        mainRender window program attributeCoords buf
-        loop window program attributeCoords buf
+        mainRender window program attributeCoords vbo
+        loop window program attributeCoords vbo buf

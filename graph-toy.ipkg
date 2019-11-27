@@ -1,6 +1,6 @@
 package myProject
 
-executable = matrix
+executable = graph-toy
 main = Main
 sourcedir = src
 pkgs = gl, sdl2, glfw, contrib
