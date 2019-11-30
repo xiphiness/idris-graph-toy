@@ -199,10 +199,10 @@ implementation MainState IO where
     Just (KeyDown key) <- lift $ SDL2.pollEvent | (do pure ())
     case key of
       KeyDownArrow => (do
-        write scale ((-0.05) + !(read scale))
+        write scale (0.95 * !(read scale))
         pure ())
       KeyUpArrow => (do
-        write scale (0.05 + !(read scale))
+        write scale (1.05 * !(read scale))
         pure ())
       KeyLeftArrow => (do
         write offset ((-0.05) + !(read offset))
@@ -261,7 +261,7 @@ startMain = (do
         loop st = (do
           [win, stat, offsetSt, scaleSt, prog, vbo, varlocs] <- split st
           call $ useProg prog
-          [attrib, offset, scale] <- split varlocs
+          coord2d, offset, scale] <- split varlocs
           call $ pollEvents offsetSt scaleSt
           call $ useUniform offset !(read offsetSt)
           call $ useUniform scale !(read scaleSt)
@@ -271,11 +271,11 @@ startMain = (do
           sts <- read stat
           case sts of
             Running => (do
-              combine varlocs [attrib, offset, scale]
+              combine varlocs [coord2d, offset, scale]
               combine st [win, stat, offsetSt, scaleSt, prog, vbo, varlocs]
               loop st)
             Quit => (do
-              combine varlocs [attrib, offset, scale]
+              combine varlocs [coord2d, offset, scale]
               combine st [win, stat, offsetSt, scaleSt, prog, vbo, varlocs]
               pure ()))
 
