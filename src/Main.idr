@@ -185,24 +185,41 @@ readShaderSpecs (x0::x1::xs) = (do
   pure $ Right ([(GL_VERTEX_SHADER, vertexShader), (GL_FRAGMENT_SHADER, fragmentShader)] ++ remainder)
   )
 
-
-buffer2DFunction: ((Double -> Double) -> Int -> List Double)
-buffer2DFunction func num = loop func 0 num []
-  where loop: (Double -> Double) -> Int -> Int -> List Double -> List Double
-        loop func i num acc =
-          let iDbl = (cast i/scale)-1.0
-              res = func iDbl
+polar2DFunction : ((Double -> Double) -> Double -> List Double)
+polar2DFunction fun res = loop 0 []
+  where scale: Double
+        scale = (2 * pi) / res
+        loop: Double -> List Double -> List Double
+        loop i acc =
+          let theta = scale * i
+              r = fun theta
+              x = (cos theta) * r
+              y = (sin theta) * r
           in
-            if i < num
+            if theta <= (2*pi)
               then
-              if res <= 1.0 && res >= -1.0
-                then
-                loop func (i+1) num (acc ++ [iDbl, res])
-              else loop func (i+1) num acc
+                loop (i+1) (acc ++ [x, y])
             else
               acc
-        where scale: Double
-              scale = (cast num)/2.0
+
+buffer2DFunction: ((Double -> Double) -> Double -> Double -> Double -> List Double)
+buffer2DFunction func res min max = loop 0 []
+  where scale: Double
+        scale = (max - min)/res
+        loop: Int -> List Double -> List Double
+        loop i acc =
+          let iDbl = min + (scale * (cast i))
+              out = func iDbl
+          in
+            if iDbl <= max
+              then
+              if out <= max && out >= min
+                then
+                loop (i+1) (acc ++ [iDbl, out])
+              else loop (i+1) acc
+            else
+              acc
+
 
 
 
@@ -216,6 +233,11 @@ record RenderState where
 
  -- some lookup type destination, resorts to
 
+data Status = Running | Quit
+
+myUniform1d : GLint -> GLdouble -> IO ()
+myUniform1d location x =
+  foreign FFI_C "myUniform1d" ( GLint -> GLdouble -> IO ()) location x
 
 
 interface MainState (m : Type -> Type) where
@@ -229,6 +251,8 @@ interface MainState (m : Type -> Type) where
   initVarLocs : (prog : Var) -> ST m Var [prog ::: (State GLuint), add (Composite [State GLint, State GLint, State GLint])]
   initBuffer : ST m Var [add (State GLuint)]
   swapWin : (win: Var) -> ST m () [ win ::: (State Window)]
+  pollEventsQu : (status: Var) -> ST m () [ win ::: (State Window), status ::: (State Status)]
+  pollEvents : (offset: Var) -> (scale: Var) -> ST m () [offset ::: (State Double), scale ::: (State Double)]
   close : (prog: Var) -> (comp: Var) -> ST m () [remove prog (State GLuint), remove comp (Composite [State GLuint, State GLint, State GLint, State GLint])]
   closeb : (n: Nat) -> (prog: Var) -> (comp: Var) -> (shaders: Var) -> ST m () [remove prog (State GLuint), remove comp (Composite [State GLuint, State GLint, State GLint, State GLint]), remove shaders (State (Vect n Int))]
 
@@ -249,6 +273,7 @@ implementation MainState IO where
       lift $ putStrLn $ show ferror
       pure (Left ()))
     locations <- lift $ traverse createShader shaderSpec
+    lift $ traverse printShaderLog locations
     locs <- new locations
     lift $ putStrLn "initted shaders"
     pure (Right locs))
@@ -264,8 +289,8 @@ implementation MainState IO where
     lift $ putStrLn "initVarLocs"
     prog <- read program
     coord2d <- lift $ glGetAttribLocation prog "coord2d"
-    offset <- lift $ glGetUniformLocation prog "offset_x"
-    scale <- lift $ glGetUniformLocation prog "scale_x"
+    offset <- lift $ glGetUniformLocation prog "offset_y"
+    scale <- lift $ glGetUniformLocation prog "scale"
     out <- new ()
     combine out [!(new coord2d), !(new offset), !(new scale)]
     returning out (toEnd out))
@@ -274,19 +299,45 @@ implementation MainState IO where
     (vbo :: _ ) <- lift $ glGenBuffers 1
     lift $ glBindBuffer GL_ARRAY_BUFFER vbo
     ds <- lift $ sizeofDouble
-    buf <- lift $ (Glb.doublesToBuffer $ buffer2DFunction (sin) 2000)
-    lift $ glBufferData GL_ARRAY_BUFFER (ds * (cast $ length triangleVertices)) buf GL_STATIC_DRAW
+    -- funBuf <- lift $ pure $ buffer2DFunction (\x => sin (10*x)) 2000 (-1.0) 1.0
+    -- weed leaf
+    funBuf <- lift $ pure $ polar2DFunction (\theta => (1 + 0.9 * ( cos (8 * theta) ) ) * (1 + 0.1 * (cos (24 * theta ))   ) * (0.9 + 0.1 * (cos (200 *theta))   ) *  (1 + (sin theta)   )) 2000
+
+    buf <- lift $ (Glb.doublesToBuffer funBuf)
+    lift $ glBufferData GL_ARRAY_BUFFER (ds * (cast $ length funBuf)) buf GL_STATIC_DRAW
     pure !(new vbo))
   useProg prog = (do
+    lift $ glClearColor 1.0 1.0 1.0 1.0
+    lift $ glClear GL_COLOR_BUFFER_BIT
     lift $ glUseProgram !(read prog)
     pure ()
     )
   useUniform uni x = do
-    lift $ glUniform1d !(read uni) x
+    lift $ myUniform1d !(read uni) x
     pure ()
   swapWin win = do
     lift $ swapWindow !(read win)
     pure ()
+  pollEventsQu stat = do
+    False <- lift $ SDL2.pollEventsForQuit | (do
+      write stat Quit
+      pure ())
+    pure ()
+  pollEvents offset scale = (do
+    Just (KeyDown key) <- lift $ SDL2.pollEvent | (do pure ())
+    case key of
+      KeyDownArrow => (do
+        write scale ((-0.05) + !(read scale))
+        pure ())
+      KeyUpArrow => (do
+        write scale (0.05 + !(read scale))
+        pure ())
+      KeyLeftArrow => (do
+        write offset ((-0.05) + !(read offset))
+        pure ())
+      KeyRightArrow => (do
+        write offset (0.05 + !(read offset))
+        pure ()))
   bindVertexBuffer vbo attrib = (do
     vbos <- read vbo
     attr <- read attrib
@@ -306,58 +357,58 @@ implementation MainState IO where
     [a,b,c,d] <- split comp
     delete prog; delete a; delete b; delete c; delete d; delete comp; delete shaders)
 
-initMain : (ConsoleIO m, MainState m) => ST m (Either () Var) [addIfRight (Composite [State Window, State GLuint, State GLuint, Composite [State GLint, State GLint, State GLint]])]
-initMain = (do
+startMain : (ConsoleIO m, MainState m) => ST m () []
+startMain = (do
   win <- initWindow width height
   prog <- call initProgram
-  Right shaderSt <- call $ initShaders 2 shaderList | Left () => (do delete prog; delete win; pure (Left ()))
+  Right shaderSt <- call $ initShaders 2 shaderList | Left () => (do delete prog; delete win; pure ())
   call $ bindShaders 2 prog shaderSt
   varlocs <- call $ initVarLocs prog
+  [coord2d, offset, scale] <- split varlocs
+  putStrLn ("coord2d: " ++ (show !(read coord2d)))
+  putStrLn ("offset: " ++ (show !(read offset)))
+  putStrLn ("scale: " ++ (show !(read scale)))
+  combine varlocs [coord2d, offset, scale]
   bufferSt <- call initBuffer
   out <- new ()
-  combine out [win, prog, bufferSt, varlocs]
-  pure (Right out))
+  stat <- new Running
+  offsetSt <- new 0.0
+  scaleSt <- new 1.0
+  combine out [win, stat, offsetSt, scaleSt, prog, bufferSt, varlocs]
+  loop out
+  [win, stat, offsetSt, scaleSt, prog, bufferSt, varlocs] <- split out
+  delete win; delete offsetSt; delete scaleSt; delete stat; delete prog; delete bufferSt
+  [coord2d, offset, scale] <- split varlocs
+  delete coord2d; delete offset; delete scale;
+  delete varlocs
+  delete out
+  pure ()
+  )
   where shaderList: Vect 2 String
         shaderList = ["src/xy.v.glsl","src/xy.f.glsl"]
-
-renderMain: (ConsoleIO m, MainState m) => (st: Var) -> ST m Var [st ::: (Composite [State Window, State GLuint, State GLuint, Composite [State GLint, State GLint, State GLint]])]
-renderMain st = (do
-  [win, prog, vbo, varlocs] <- split st
-  call $ useProg prog
-  -- p <- read prog
-  --   lift glUseProgram prog
-  [attrib, offset, scale] <- split varlocs
-  call $ useUniform offset 0.0
-  call $ useUniform scale 1.0
-  call $ bindVertexBuffer vbo attrib
-  call $ swapWin win
-  -- lift $ glUniform1f ![read offset] 0.0
-  -- lift $ glUniform1f ![read scale] 1.0
-  -- lift $ glBindBuffer ![read vbo]
-  -- attr <- read attrib
-  -- lift $ glEnableVertexAttribArray attr
-  -- lift $ glVertexAttribPointer attr 2 GL_DOUBLE FL_FALSE 0 0
-  combine varlocs [attrib, offset, scale]
-  combine st [win, prog, vbo, varlocs]
-  pure st
-  )
-
-startMain : (ConsoleIO m, MainState m) => ST m () []
-startMain = do
-  Right comp <- initMain | Left () => do pure ()
-  loop comp
-  [a,b,c,d] <- split comp
-  delete a; delete b; delete c
-  [a,b,c] <- split d
-  delete a; delete b; delete c
-  delete d
-  delete comp
-  pure ()
-
-where loop: (ConsoleIO m, MainState m) => (st: Var) -> ST m () [st ::: (Composite [State Window, State GLuint, State GLuint, Composite [State GLint, State GLint, State GLint]])]
-      loop st = do
-        renderMain st
-        loop st
+        loop: (ConsoleIO m, MainState m) => (st: Var) -> ST m () [st ::: (Composite [State Window, State Status, State Double, State Double, State GLuint, State GLuint, Composite [State GLint, State GLint, State GLint]])]
+        loop st = (do
+          [win, stat, offsetSt, scaleSt, prog, vbo, varlocs] <- split st
+          call $ useProg prog
+          -- p <- read prog
+          --   lift glUseProgram prog
+          [attrib, offset, scale] <- split varlocs
+          call $ pollEvents offsetSt scaleSt
+          call $ useUniform offset !(read offsetSt)
+          call $ useUniform scale !(read scaleSt)
+          call $ bindVertexBuffer vbo attrib
+          call $ swapWin win
+          call $ pollEventsQu stat
+          sts <- read stat
+          case sts of
+            Running => (do
+              combine varlocs [attrib, offset, scale]
+              combine st [win, stat, offsetSt, scaleSt, prog, vbo, varlocs]
+              loop st)
+            Quit => (do
+              combine varlocs [attrib, offset, scale]
+              combine st [win, stat, offsetSt, scaleSt, prog, vbo, varlocs]
+              pure ()))
 
 
 

@@ -20,6 +20,12 @@ const char *fs_source =
   "  gl_FragColor[2] = 1.0; "
   "}";
 
+void myUniform1d(GLint loc, GLdouble v0d) {
+  GLfloat v0f = v0d;
+  glUniform1f(loc, v0f);
+}
+
+
 const char *get_vs_source() {
   return vs_source;
 }
