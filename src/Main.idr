@@ -4,16 +4,12 @@ import Graphics.Rendering.Gl.Types
 import Graphics.Rendering.Gl.Buffers as Glb
 import Graphics.Rendering.Gl.Gl41
 import Graphics.Rendering.Gl as GL
-import Graphics.Util.Transforms
-import Graphics.Util.ObjLoader
-import Graphics.Util.Mesh
+-- import Graphics.Util.Transforms
+-- import Graphics.Util.ObjLoader
+-- import Graphics.Util.Mesh
 import Graphics.Rendering.Gl
 import Graphics.Rendering.Config
 import System as System
-import Data.Buffer
-import Data.SortedMap
-import CFFI.Memory
-import CFFI.Types
 import Control.ST
 import Data.Vect
 
@@ -126,13 +122,13 @@ myUniform1d location x =
 interface MainState (m : Type -> Type) where
   initWindow: Int -> Int -> ST m Var [add (State Window)]
   initProgram : ST m Var [add (State GLuint)]
+  initVarLocs : (prog : Var) -> ST m Var [prog ::: (State GLuint), add (Composite [State GLint, State GLint, State GLint])]
+  initShaders : (n: Nat) -> Vect n String -> ST m (Either () Var) [addIfRight (State (Vect n Int))]
+  bindShaders : (n: Nat) -> (prog : Var) -> (shaders: Var) -> ST m () [prog ::: (State GLuint), remove shaders (State (Vect n Int))]
+  initBuffer : (List Double) -> ST m Var [add (State GLuint)]
   useProg : (prog: Var) -> ST m () [prog ::: (State GLuint)]
   useUniform : (uni: Var) -> GLdouble -> ST m () [uni ::: (State GLint)]
   bindVertexBuffer: (vbo: Var) -> (attrib: Var) -> ST m () [vbo ::: (State GLuint), attrib ::: (State GLint)]
-  initShaders : (n: Nat) -> Vect n String -> ST m (Either () Var) [addIfRight (State (Vect n Int))]
-  bindShaders : (n: Nat) -> (prog : Var) -> (shaders: Var) -> ST m () [prog ::: (State GLuint), remove shaders (State (Vect n Int))]
-  initVarLocs : (prog : Var) -> ST m Var [prog ::: (State GLuint), add (Composite [State GLint, State GLint, State GLint])]
-  initBuffer : (List Double) -> ST m Var [add (State GLuint)]
   swapWin : (win: Var) -> ST m () [ win ::: (State Window)]
   pollEventsQu : (status: Var) -> ST m () [ win ::: (State Window), status ::: (State Status)]
   pollEvents : (offset: Var) -> (scale: Var) -> ST m () [offset ::: (State Double), scale ::: (State Double)]
@@ -243,8 +239,8 @@ startMain = (do
              * (1 + (sin theta))) 2000)
   out <- new ()
   stat <- new Running
-  offsetSt <- new 0.0
-  scaleSt <- new 1.0
+  offsetSt <- new defaultOffset
+  scaleSt <- new defaultScale
   combine out [win, stat, offsetSt, scaleSt, prog, bufferSt, varlocs]
   loop out
   [win, stat, offsetSt, scaleSt, prog, bufferSt, varlocs] <- split out
